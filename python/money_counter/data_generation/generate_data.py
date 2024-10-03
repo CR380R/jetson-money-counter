@@ -3,6 +3,7 @@ import argparse
 import random
 import numpy as np
 import xml.etree.cElementTree as ET
+from typing import Dict
 
 background = cv2.imread('assets/background.jpg')
 hands = []
@@ -23,6 +24,7 @@ coins = {
     1: coin1,
     2: coin2
 }
+
 
 # parse the command line
 parser = argparse.ArgumentParser(description="Classify a live camera stream using an image recognition DNN.", 
@@ -49,37 +51,49 @@ def generate_image(background: np.ndarray):
         2: []
     }
     working_background = np.copy(background)
+    cumulative_mask = np.zeros_like(working_background[:,:,0])
     for coin_num, coin in coins.items():
         num_to_generate = random.randint(0, 10)
         for _ in range(num_to_generate):
-            working_copy = np.copy(coin)
+            working_copy = np.copy(coin).astype(np.uint8)
 
             # Get coin mask
             colour_mask = np.array([0, 255, 0]) # Green
-            coin_mask = (cv2.inRange(working_copy, colour_mask, colour_mask) == 0).astype(int)
-            coin_mask[coin_mask == 0] = -1
+            coin_mask = (cv2.inRange(working_copy, colour_mask, colour_mask) == 0).astype(np.uint8)
+            coin_mask = np.stack((coin_mask, coin_mask, coin_mask), axis=-1)
 
             # Rotate
             rotation_angle = random.randint(0, 360)
             working_copy = rotate_image(working_copy, rotation_angle)
-            coin_mask = rotate_image(coin_mask)
+            coin_mask = rotate_image(coin_mask, rotation_angle)
+
+            # Change contrast/brightness
+            working_copy = cv2.convertScaleAbs(working_copy, alpha=random.randint(7, 13) / 10, beta=random.randint(-30, 30))
 
             # Place onto canvas
             top = random.randint(0, working_background.shape[0] - working_copy.shape[0] - 1)
             left = random.randint(0, working_background.shape[1] - working_copy.shape[1] - 1)
-            canvas = np.ones_like(background) * -1
-            canvas[top:top + working_copy.shape[0], left:left + working_copy.shape[1]] = coin_mask
+            canvas = np.zeros_like(background)
+            canvas[top:top + working_copy.shape[0], left:left + working_copy.shape[1], :] = coin_mask
+
+            # Check overlap
+            overlapping_pixels = np.sum((cumulative_mask + canvas[:, :, 0]) == 2)
+            coin_total_pixels = np.sum(canvas[:, :, 0] == 1)
+            if (overlapping_pixels / coin_total_pixels  < 0.2):
+                cumulative_mask[top:top + working_copy.shape[0], left:left + working_copy.shape[1]] = coin_mask[:, :, 0]
+            else:
+                continue
 
             # Place onto image
-            working_background[canvas != -1] = working_copy[coin_mask != -1]
+            working_background[canvas != 0] = working_copy[coin_mask != 0]
 
             # Store metadata
-            coordinates[coin_num].append(top, left, top + working_copy.shape[0], left + working_copy.shape[1])
+            coordinates[coin_num].append((top, left, top + working_copy.shape[0], left + working_copy.shape[1]))
     
     return working_background, coordinates
 
 
-def generate_annotation_file(coordinates, filename: str, width: int, height: int):
+def generate_annotation_file(coordinates: Dict, filename: str, width: int, height: int):
     database_name = 'coins'
     root = ET.Element("annotation")
     ET.SubElement(root, "filename").text = f"{filename}.jpg"
@@ -91,12 +105,12 @@ def generate_annotation_file(coordinates, filename: str, width: int, height: int
     ET.SubElement(source, "image").text = 'custom'
 
     size = ET.SubElement(root, "size")
-    ET.SubElement(size, "width").text = width
-    ET.SubElement(size, "height").text = height
-    ET.SubElement(size, "depth").text = 3
-    ET.SubElement(size, "segmented").text = 0
+    ET.SubElement(size, "width").text = str(width)
+    ET.SubElement(size, "height").text = str(height)
+    ET.SubElement(size, "depth").text = str(3)
+    ET.SubElement(size, "segmented").text = str(0)
 
-    for coin_type, anno_list in coordinates:
+    for coin_type, anno_list in coordinates.items():
         for annotation in anno_list:
             det_obj = ET.SubElement(root, "object")
             ET.SubElement(det_obj, "name").text = str(coin_type)
@@ -105,19 +119,30 @@ def generate_annotation_file(coordinates, filename: str, width: int, height: int
             ET.SubElement(det_obj, "difficult").text = '0'
 
             bbox = ET.SubElement(det_obj, "bndbox")
-            ET.SubElement(bbox, "xmin").text = annotation[1]
-            ET.SubElement(bbox, "ymin").text = annotation[0]
-            ET.SubElement(bbox, "xmax").text = annotation[3]
-            ET.SubElement(bbox, "ymax").text = annotation[2]
+            ET.SubElement(bbox, "xmin").text = str(annotation[1])
+            ET.SubElement(bbox, "ymin").text = str(annotation[0])
+            ET.SubElement(bbox, "xmax").text = str(annotation[3])
+            ET.SubElement(bbox, "ymax").text = str(annotation[2])
 
     tree = ET.ElementTree(root)
     tree.write(f"{filename}.xml")
 
+
+def plot_boxes(image: np.ndarray, coordinates: Dict):
+    image_copy = np.copy(image)
+    for coin_type, anno_list in coordinates.items():
+        for annotation in anno_list:
+            image_copy = cv2.rectangle(image_copy, (annotation[1], annotation[0]), (annotation[3], annotation[2]), (0, 0, 255), 2)
+            coin_unit = '$' if coin_type < 5 else 'c'
+            image_copy = cv2.putText(image_copy, f'[{coin_type}{coin_unit}]', (annotation[1], annotation[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    return image_copy
 
 
 args = parser.parse_known_args()[0]
 
 for _ in range(args.num_train):
     generated_image, coordinates = generate_image(background)
-    generate_annotation_file(coordinates, 'test_data', generated_image.shape[1], generated_image.shape[0])
+    plotted_image = plot_boxes(generated_image, coordinates)
+    cv2.imwrite('output/test_image.png', plotted_image)
+    generate_annotation_file(coordinates, 'output/test_data', generated_image.shape[1], generated_image.shape[0])
     
