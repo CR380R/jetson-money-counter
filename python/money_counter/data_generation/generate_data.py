@@ -4,6 +4,10 @@ import random
 import numpy as np
 import xml.etree.cElementTree as ET
 from typing import Dict
+import time
+import os
+
+OUTPUT_ROOT = f'{os.path.dirname(os.path.realpath(__file__))}/output/'
 
 background = cv2.imread('assets/background.jpg')
 hands = []
@@ -30,9 +34,9 @@ coins = {
 parser = argparse.ArgumentParser(description="Classify a live camera stream using an image recognition DNN.", 
                                  formatter_class=argparse.RawTextHelpFormatter)
 
-parser.add_argument("--num_train", type=int, default=1, help="The number of training images to generate (default: 1)")
-parser.add_argument("--num_val", type=int, default=1, help="The number of validation images to generate (default: 1)")
-parser.add_argument("--num_test", type=int, default=1, help="The number of test images to generate (default: 1)")
+parser.add_argument("--num_train", type=int, default=0, help="The number of training images to generate (default: 0)")
+parser.add_argument("--num_val", type=int, default=0, help="The number of validation images to generate (default: 0)")
+parser.add_argument("--num_test", type=int, default=0, help="The number of test images to generate (default: 0)")
 
 
 def rotate_image(image, angle):
@@ -93,8 +97,7 @@ def generate_image(background: np.ndarray):
     return working_background, coordinates
 
 
-def generate_annotation_file(coordinates: Dict, filename: str, width: int, height: int):
-    database_name = 'coins'
+def generate_annotation_file(coordinates: Dict, database_name: str, filename: str, width: int, height: int):
     root = ET.Element("annotation")
     ET.SubElement(root, "filename").text = f"{filename}.jpg"
     ET.SubElement(root, "folder").text = database_name
@@ -125,7 +128,7 @@ def generate_annotation_file(coordinates: Dict, filename: str, width: int, heigh
             ET.SubElement(bbox, "ymax").text = str(annotation[2])
 
     tree = ET.ElementTree(root)
-    tree.write(f"{filename}.xml")
+    tree.write(f"{OUTPUT_ROOT}/{database_name}/Annotations/{filename}.xml")
 
 
 def plot_boxes(image: np.ndarray, coordinates: Dict):
@@ -140,9 +143,22 @@ def plot_boxes(image: np.ndarray, coordinates: Dict):
 
 args = parser.parse_known_args()[0]
 
-for _ in range(args.num_train):
-    generated_image, coordinates = generate_image(background)
-    plotted_image = plot_boxes(generated_image, coordinates)
-    cv2.imwrite('output/test_image.png', plotted_image)
-    generate_annotation_file(coordinates, 'output/test_data', generated_image.shape[1], generated_image.shape[0])
+database_names = ['train', 'validation', 'test']
+num_to_generate = (args.num_train, args.num_val, args.num_test)
+
+for database_name, num_images in zip(database_names, num_to_generate):
+    print(f"Generating {num_images} {database_name} images")
+
+    # Set up folders
+    if not os.path.exists(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/'):
+        os.makedirs(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/')
+    if not os.path.exists(f'{OUTPUT_ROOT}/{database_name}/Annotations/'):
+        os.makedirs(f'{OUTPUT_ROOT}/{database_name}/Annotations/')
+    
+    for _ in range(num_images):
+        generated_image, coordinates = generate_image(background)
+        plotted_image = plot_boxes(generated_image, coordinates)
+        filename = str(int(time.time() * 1000))
+        cv2.imwrite(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/{filename}.png', plotted_image)
+        generate_annotation_file(coordinates, database_name, filename, generated_image.shape[1], generated_image.shape[0])
     
