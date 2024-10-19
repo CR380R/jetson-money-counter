@@ -8,6 +8,15 @@ import time
 import os
 
 OUTPUT_ROOT = f'{os.path.dirname(os.path.realpath(__file__))}/output/'
+DATABASE_NAME = 'coins'
+
+# Set up folders
+if not os.path.exists(f'{OUTPUT_ROOT}/{DATABASE_NAME}/JPEGImages/'):
+    os.makedirs(f'{OUTPUT_ROOT}/{DATABASE_NAME}/JPEGImages/')
+if not os.path.exists(f'{OUTPUT_ROOT}/{DATABASE_NAME}/Annotations/'):
+    os.makedirs(f'{OUTPUT_ROOT}/{DATABASE_NAME}/Annotations/')
+if not os.path.exists(f'{OUTPUT_ROOT}/{DATABASE_NAME}/ImageSets/Main/'):
+    os.makedirs(f'{OUTPUT_ROOT}/{DATABASE_NAME}/ImageSets/Main/')
 
 background = cv2.imread('assets/background.jpg')
 hands = []
@@ -97,13 +106,13 @@ def generate_image(background: np.ndarray):
     return working_background, coordinates
 
 
-def generate_annotation_file(coordinates: Dict, database_name: str, filename: str, width: int, height: int):
+def generate_annotation_file(coordinates: Dict, filename: str, width: int, height: int):
     root = ET.Element("annotation")
     ET.SubElement(root, "filename").text = f"{filename}.jpg"
-    ET.SubElement(root, "folder").text = database_name
+    ET.SubElement(root, "folder").text = DATABASE_NAME
 
     source = ET.SubElement(root, "source")
-    ET.SubElement(source, "database").text = database_name
+    ET.SubElement(source, "database").text = DATABASE_NAME
     ET.SubElement(source, "annotation").text = 'custom'
     ET.SubElement(source, "image").text = 'custom'
 
@@ -128,7 +137,7 @@ def generate_annotation_file(coordinates: Dict, database_name: str, filename: st
             ET.SubElement(bbox, "ymax").text = str(annotation[2])
 
     tree = ET.ElementTree(root)
-    tree.write(f"{OUTPUT_ROOT}/{database_name}/Annotations/{filename}.xml")
+    tree.write(f"{OUTPUT_ROOT}/{DATABASE_NAME}/Annotations/{filename}.xml")
 
 
 def plot_boxes(image: np.ndarray, coordinates: Dict):
@@ -143,22 +152,21 @@ def plot_boxes(image: np.ndarray, coordinates: Dict):
 
 args = parser.parse_known_args()[0]
 
-database_names = ['train', 'validation', 'test']
+subset_names = ['train', 'validation', 'test']
 num_to_generate = (args.num_train, args.num_val, args.num_test)
 
-for database_name, num_images in zip(database_names, num_to_generate):
-    print(f"Generating {num_images} {database_name} images")
-
-    # Set up folders
-    if not os.path.exists(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/'):
-        os.makedirs(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/')
-    if not os.path.exists(f'{OUTPUT_ROOT}/{database_name}/Annotations/'):
-        os.makedirs(f'{OUTPUT_ROOT}/{database_name}/Annotations/')
+for subset_name, num_images in zip(subset_names, num_to_generate):
+    print(f"Generating {num_images} {subset_name} images")
     
+    generated_image_names = []
     for _ in range(num_images):
         generated_image, coordinates = generate_image(background)
         plotted_image = plot_boxes(generated_image, coordinates)
         filename = str(int(time.time() * 1000))
-        cv2.imwrite(f'{OUTPUT_ROOT}/{database_name}/JPEGImages/{filename}.png', plotted_image)
-        generate_annotation_file(coordinates, database_name, filename, generated_image.shape[1], generated_image.shape[0])
+        cv2.imwrite(f'{OUTPUT_ROOT}/{DATABASE_NAME}/JPEGImages/{filename}.png', plotted_image)
+        generate_annotation_file(coordinates, filename, generated_image.shape[1], generated_image.shape[0])
+        generated_image_names.append(filename)
+
+    with open(f'{OUTPUT_ROOT}/{DATABASE_NAME}/ImageSets/Main/{subset_name}.txt', 'w') as f:
+        f.write('\n'.join(generated_image_names))
     
